@@ -124,6 +124,7 @@ async function settingsModal(){
   const {data:pref}=await sb.from("prefs").select("korz_time").maybeSingle();
   const t=String((pref&&pref.korz_time)||"10:00").slice(0,5);
   openModal(`<h2>Настройки</h2>
+    <p class="qty" style="margin:0">Вы вошли как <b>${esc(user&&user.email)}</b> — это тот же аккаунт, что в «Задачах».</p>
     <div class="fld"><label>Уведомления на этом устройстве</label>
       <p class="qty" style="margin:0">Раз в день, если пора пересчитать что-то в Заначке.</p>
       ${!pushOk()?`<p class="qty" style="margin:0">Этот браузер не умеет уведомления. На телефоне откройте установленное приложение.</p>`
