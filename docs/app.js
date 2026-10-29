@@ -132,20 +132,24 @@ async function settingsModal(){
         :`<button class="btn pri" id="pOn" style="align-self:flex-start">Включить уведомления</button>`}
     </div>
     <div class="fld"><label for="kTime">Во сколько напоминать</label><input id="kTime" type="time" value="${t}" style="max-width:140px"></div>
-    <div class="fld"><label>Перенос данных</label><p class="qty" style="margin:0">Файл заменяет всё, что сейчас в Корзинке: товары, группы и магазины.</p><button class="btn" id="imp" style="align-self:flex-start">Загрузить товары из файла</button></div>
+    <div class="fld"><label>Перенос данных</label><button class="btn" id="imp" style="align-self:flex-start">Загрузить товары из файла</button>
+      <div id="impAsk" hidden class="fld" style="gap:8px"><p class="qty" style="margin:0">Сейчас в Корзинке ${Object.keys(S.items).length} товаров и ${Object.keys(S.groups).length} групп. Что сделать с ними?</p>
+        <div class="abtns" style="justify-content:flex-start"><button class="btn" id="impAdd">Оставить и добавить новые</button><button class="btn danger" id="impRep">Удалить всё и загрузить файл</button></div>
+        <p class="qty" style="margin:0">При добавлении группы и магазины с теми же названиями не задвоятся, а товары, которые уже есть, пропустятся.</p></div></div>
     <div class="mact"><button class="btn danger left" id="out">Выйти из аккаунта</button><button class="btn pri" data-close>Готово</button></div>`,m=>{
     const q=s=>m.querySelector(s);
     if(q("#pOn"))q("#pOn").onclick=pushOn;
     if(q("#pOff"))q("#pOff").onclick=pushOff;
     if(q("#pTest"))q("#pTest").onclick=pushTest;
     q("#kTime").onchange=e=>e.target.value&&savePrefs({korz_time:e.target.value});
-    // loading a file wipes the current Корзинка — ask in the page first if there is anything to lose
-    let armed=false;
-    const n=Object.keys(S.items).length,g=Object.keys(S.groups).length;
+    // with something already in Корзинка, ask whether the file replaces it or adds to it
+    const pick=m=>{importMode=m;$("#import-file").click()};
     q("#imp").onclick=()=>{
-      if((n||g)&&!armed){armed=true;q("#imp").textContent=`Заменить: сейчас ${n} товаров и ${g} групп будут удалены`;q("#imp").classList.add("danger");return}
-      $("#import-file").click();
+      if(!Object.keys(S.items).length&&!Object.keys(S.groups).length&&!Object.keys(S.stores).length)return pick("replace");
+      q("#imp").hidden=true;q("#impAsk").hidden=false;
     };
+    q("#impAdd").onclick=()=>pick("add");
+    q("#impRep").onclick=()=>pick("replace");
     q("#out").onclick=()=>{closeModal();sb.auth.signOut()};
   });
 }
@@ -175,25 +179,35 @@ async function pushTest(){
 }
 
 // file from the old Корзинка (claude.ai): {groups:{id:{…}}, stores:{…}, items:{…}}
+let importMode="replace";
 $("#import-file").addEventListener("change",async e=>{
   const f=e.target.files[0];e.target.value="";if(!f)return;
   let d;try{d=JSON.parse(await f.text())}catch(_){return toast("Это не файл Корзинки")}
   closeModal();toast("Загружаю…");
-  const ids={};const fresh=o=>Object.entries(o||{}).map(([old,v])=>{ids[old]=newId();return [ids[old],v]});
-  const rows=col=>fresh(d[col]).map(([id,v])=>{
+  const add=importMode==="add";
+  const key=s=>String(s||"").trim().toLowerCase();
+  // when adding: a group/store with the same name is reused, an item already present is skipped
+  const same=col=>add?Object.fromEntries(Object.entries(S[col]).map(([id,v])=>[key(v.name),id])):{};
+  const have={groups:same("groups"),stores:same("stores")};
+  const haveItems=new Set(add?Object.values(S.items).map(i=>key(i.name)):[]);
+  const ids={};
+  const rows=col=>Object.entries(d[col]||{}).flatMap(([old,v])=>{
+    if(col!=="items"&&have[col][key(v.name)]){ids[old]=have[col][key(v.name)];return []}
+    if(col==="items"&&haveItems.has(key(v.name)))return [];
+    const id=ids[old]=newId();
     if(col==="items")v={...v,groupId:ids[v.groupId]||"",storeId:ids[v.storeId]||"",image:imgSrc(v.image),history:v.history||[]};
-    return {id,...toRow(col,v)};
+    return [{id,...toRow(col,v)}];
   });
   try{
-    // the file replaces everything, so repeated loads never duplicate anything
-    for(const c of ["items","groups","stores"])done(await sb.from(TBL[c]).delete().not("id","is",null));
+    if(!add)for(const c of ["items","groups","stores"])done(await sb.from(TBL[c]).delete().not("id","is",null));
     const g=rows("groups"),s=rows("stores"),it=rows("items");
+    const skipped=Object.keys(d.items||{}).length-it.length;
     // defaultToNull:false — a field missing in some rows takes the column default instead of null
     const ins=(t,r)=>sb.from(t).insert(r,{defaultToNull:false});
     if(g.length)done(await ins(TBL.groups,g));
     if(s.length)done(await ins(TBL.stores,s));
     for(let i=0;i<it.length;i+=200)done(await ins(TBL.items,it.slice(i,i+200)));
-    toast(`Загружено: ${it.length} товаров`);load();
+    toast(`Загружено: ${it.length} товаров`+(skipped?`, уже были: ${skipped}`:""));load();
   }catch(err){fail(err)}
 });
 
