@@ -208,7 +208,12 @@ $("#import-file").addEventListener("change",async e=>{
     if(s.length)done(await ins(TBL.stores,s));
     for(let i=0;i<it.length;i+=200)done(await ins(TBL.items,it.slice(i,i+200)));
     toast(`Загружено: ${it.length} товаров`+(skipped?`, уже были: ${skipped}`:""));load();
-  }catch(err){fail(err)}
+  }catch(err){
+    console.error(err);load();
+    // keep the full reason on screen so it can be read or screenshotted
+    const why=[err&&err.message,err&&err.details,err&&err.hint,err&&err.code].filter(Boolean).join("\n")||String(err);
+    openModal(`<h2>Не получилось загрузить</h2><p class="qty" style="margin:0">Сделайте, пожалуйста, скриншот этого окна.</p><div class="fld"><textarea class="copy" readonly style="min-height:120px">${esc(why)}</textarea></div><div class="mact"><button class="btn pri" data-close>Закрыть</button></div>`);
+  }
 });
 
 /* ---------- derived data ---------- */
@@ -759,7 +764,7 @@ function shrink(file){
 }
 
 let tt=null;
-function toast(msg){let el=$(".toast");if(!el){el=document.createElement("div");el.className="toast";el.setAttribute("role","status");document.body.appendChild(el)}el.textContent=msg;clearTimeout(tt);tt=setTimeout(()=>el.remove(),2200)}
+function toast(msg){let el=$(".toast");if(!el){el=document.createElement("div");el.className="toast";el.setAttribute("role","status");document.body.appendChild(el)}el.textContent=msg;clearTimeout(tt);tt=setTimeout(()=>el.remove(),/^Не удалось/.test(msg)?7000:2200)}
 
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 })();
