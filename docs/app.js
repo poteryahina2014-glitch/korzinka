@@ -186,26 +186,31 @@ $("#import-file").addEventListener("change",async e=>{
   closeModal();toast("Загружаю…");
   const add=importMode==="add";
   const key=s=>String(s||"").trim().toLowerCase();
-  // when adding: a group/store with the same name is reused, an item already present is skipped
-  const same=col=>add?Object.fromEntries(Object.entries(S[col]).map(([id,v])=>[key(v.name),id])):{};
-  const have={groups:same("groups"),stores:same("stores")};
-  const haveItems=new Set(add?Object.values(S.items).map(i=>key(i.name)):[]);
-  const ids={};
-  const rows=col=>Object.entries(d[col]||{}).flatMap(([old,v])=>{
-    if(col!=="items"&&have[col][key(v.name)]){ids[old]=have[col][key(v.name)];return []}
-    if(col==="items"&&haveItems.has(key(v.name)))return [];
-    const id=ids[old]=newId();
-    if(col==="items")v={...v,groupId:ids[v.groupId]||"",storeId:ids[v.storeId]||"",image:imgSrc(v.image),history:v.history||[]};
-    return [{id,...toRow(col,v)}];
-  });
+  // what is in the base right now — not what this page remembers
+  const fromBase=async(t,cols)=>{const r=await sb.from(t).select(cols);done(r);return r.data};
   try{
     if(!add)for(const c of ["items","groups","stores"])done(await sb.from(TBL[c]).delete().not("id","is",null));
+    // when adding: a group/store with the same name is reused, an item already present is skipped
+    const byName=async t=>add?Object.fromEntries((await fromBase(t,"id,name")).map(x=>[key(x.name),x.id])):{};
+    const have={groups:await byName(TBL.groups),stores:await byName(TBL.stores)};
+    const haveItems=new Set(add?(await fromBase(TBL.items,"name")).map(x=>key(x.name)):[]);
+    const ids={};
+    const rows=col=>Object.entries(d[col]||{}).flatMap(([old,v])=>{
+      if(col!=="items"&&have[col][key(v.name)]){ids[old]=have[col][key(v.name)];return []}
+      if(col==="items"&&haveItems.has(key(v.name)))return [];
+      const id=ids[old]=newId();
+      if(col==="items")v={...v,groupId:ids[v.groupId]||"",storeId:ids[v.storeId]||"",image:imgSrc(v.image),history:v.history||[]};
+      return [{id,...toRow(col,v)}];
+    });
     const g=rows("groups"),s=rows("stores"),it=rows("items");
     const skipped=Object.keys(d.items||{}).length-it.length;
     // defaultToNull:false — a field missing in some rows takes the column default instead of null
     const ins=(t,r)=>sb.from(t).insert(r,{defaultToNull:false});
     if(g.length)done(await ins(TBL.groups,g));
     if(s.length)done(await ins(TBL.stores,s));
+    // an item never points to a group or store the base does not have
+    const gOk=new Set((await fromBase(TBL.groups,"id")).map(x=>x.id)),sOk=new Set((await fromBase(TBL.stores,"id")).map(x=>x.id));
+    it.forEach(r=>{if(r.group_id&&!gOk.has(r.group_id))r.group_id=null;if(r.store_id&&!sOk.has(r.store_id))r.store_id=null});
     for(let i=0;i<it.length;i+=200)done(await ins(TBL.items,it.slice(i,i+200)));
     toast(`Загружено: ${it.length} товаров`+(skipped?`, уже были: ${skipped}`:""));load();
   }catch(err){
