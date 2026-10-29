@@ -1,0 +1,9 @@
+__pycache__/
+.claude/
+# личные заметки и данные — не выкладывать в открытый репозиторий
+CLAUDE.md
+korzinka-data.json
+# старая версия (артефакт claude.ai) и локальные тесты
+korzinka.html
+docs/test-mock.html
+docs/test-data.json

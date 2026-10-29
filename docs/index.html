@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2d7a4c">
+<title>Корзинка</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Manrope:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="top" hidden>
+  <div class="wrap hrow">
+    <div class="brand"><i>🧺</i>Корзинка</div>
+    <div class="tabs" role="group" aria-label="Раздел">
+      <button id="tabBuy" data-tab="buy">Купить <span class="cnt" id="cntBuy">0</span></button>
+      <button id="tabCat" data-tab="cat">Справочник</button>
+      <button id="tabStock" data-tab="stock">Заначка <span class="cnt" id="cntStock" hidden>0</span></button>
+      <button id="tabStats" data-tab="stats">Статистика</button>
+    </div>
+    <div class="viewsw" role="group" aria-label="Вид">
+      <button id="vList" data-view="list" title="Списком" aria-label="Списком"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg></button>
+      <button id="vTiles" data-view="tiles" title="Плитками" aria-label="Плитками"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/></svg></button>
+    </div>
+    <button class="edit gear" data-act="settings" title="Настройки" aria-label="Настройки"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg></button>
+  </div>
+</header>
+
+<main class="wrap" id="main"><div class="empty"><b>Загружаю…</b>Секунду, подтягиваю справочник.</div></main>
+
+<div class="share" id="share" hidden>
+  <div class="wrap">
+    <span class="lbl" id="shareLbl">Отправить список</span>
+    <button class="btn pri" id="btnCopy">Скопировать</button>
+    <button class="btn" id="btnShare" hidden>Поделиться</button>
+    <a class="btn" id="lnkTg" href="https://t.me/" target="_blank" rel="noopener">Telegram</a>
+    <a class="btn" id="lnkWa" href="https://wa.me/" target="_blank" rel="noopener">WhatsApp</a>
+  </div>
+</div>
+
+<div id="modalRoot"></div>
+<input type="file" id="import-file" accept=".json,application/json" hidden>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.76.1/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
