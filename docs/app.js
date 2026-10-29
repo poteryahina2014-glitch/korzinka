@@ -54,7 +54,7 @@ let quickGroup=ls.get("quickGroup","");
 /* ---------- storage: Supabase, the screen updates first, the base after ---------- */
 const queues={};
 function enqueue(path,fn){const p=(queues[path]||Promise.resolve()).then(fn,fn);queues[path]=p.catch(()=>{});return p}
-function fail(e){console.error(e);toast("Не удалось сохранить — проверьте интернет и попробуйте ещё раз");load()}
+function fail(e){console.error(e);toast("Не удалось сохранить"+(e&&e.message?": "+e.message:" — проверьте интернет"));load()}
 const newId=()=>crypto.randomUUID();
 const done=r=>{if(r.error)throw r.error};
 
@@ -179,10 +179,15 @@ $("#import-file").addEventListener("change",async e=>{
     return {id,...toRow(col,v)};
   });
   try{
+    if(Object.keys(S.items).length)return toast("Товары уже загружены — второй раз не загружаю, чтобы не задвоить");
+    // leftovers of a failed earlier attempt (groups/stores without items) are cleared first
+    for(const c of ["groups","stores"])if(Object.keys(S[c]).length)done(await sb.from(TBL[c]).delete().in("id",Object.keys(S[c])));
     const g=rows("groups"),s=rows("stores"),it=rows("items");
-    if(g.length)done(await sb.from(TBL.groups).insert(g));
-    if(s.length)done(await sb.from(TBL.stores).insert(s));
-    for(let i=0;i<it.length;i+=200)done(await sb.from(TBL.items).insert(it.slice(i,i+200)));
+    // defaultToNull:false — a field missing in some rows takes the column default instead of null
+    const ins=(t,r)=>sb.from(t).insert(r,{defaultToNull:false});
+    if(g.length)done(await ins(TBL.groups,g));
+    if(s.length)done(await ins(TBL.stores,s));
+    for(let i=0;i<it.length;i+=200)done(await ins(TBL.items,it.slice(i,i+200)));
     toast(`Загружено: ${it.length} товаров`);load();
   }catch(err){fail(err)}
 });
