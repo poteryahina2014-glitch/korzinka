@@ -132,14 +132,20 @@ async function settingsModal(){
         :`<button class="btn pri" id="pOn" style="align-self:flex-start">Включить уведомления</button>`}
     </div>
     <div class="fld"><label for="kTime">Во сколько напоминать</label><input id="kTime" type="time" value="${t}" style="max-width:140px"></div>
-    <div class="fld"><label>Перенос данных</label><button class="btn" id="imp" style="align-self:flex-start">Загрузить товары из файла</button></div>
+    <div class="fld"><label>Перенос данных</label><p class="qty" style="margin:0">Файл заменяет всё, что сейчас в Корзинке: товары, группы и магазины.</p><button class="btn" id="imp" style="align-self:flex-start">Загрузить товары из файла</button></div>
     <div class="mact"><button class="btn danger left" id="out">Выйти из аккаунта</button><button class="btn pri" data-close>Готово</button></div>`,m=>{
     const q=s=>m.querySelector(s);
     if(q("#pOn"))q("#pOn").onclick=pushOn;
     if(q("#pOff"))q("#pOff").onclick=pushOff;
     if(q("#pTest"))q("#pTest").onclick=pushTest;
     q("#kTime").onchange=e=>e.target.value&&savePrefs({korz_time:e.target.value});
-    q("#imp").onclick=()=>$("#import-file").click();
+    // loading a file wipes the current Корзинка — ask in the page first if there is anything to lose
+    let armed=false;
+    const n=Object.keys(S.items).length,g=Object.keys(S.groups).length;
+    q("#imp").onclick=()=>{
+      if((n||g)&&!armed){armed=true;q("#imp").textContent=`Заменить: сейчас ${n} товаров и ${g} групп будут удалены`;q("#imp").classList.add("danger");return}
+      $("#import-file").click();
+    };
     q("#out").onclick=()=>{closeModal();sb.auth.signOut()};
   });
 }
@@ -179,9 +185,8 @@ $("#import-file").addEventListener("change",async e=>{
     return {id,...toRow(col,v)};
   });
   try{
-    if(Object.keys(S.items).length)return toast("Товары уже загружены — второй раз не загружаю, чтобы не задвоить");
-    // leftovers of a failed earlier attempt (groups/stores without items) are cleared first
-    for(const c of ["groups","stores"])if(Object.keys(S[c]).length)done(await sb.from(TBL[c]).delete().in("id",Object.keys(S[c])));
+    // the file replaces everything, so repeated loads never duplicate anything
+    for(const c of ["items","groups","stores"])done(await sb.from(TBL[c]).delete().not("id","is",null));
     const g=rows("groups"),s=rows("stores"),it=rows("items");
     // defaultToNull:false — a field missing in some rows takes the column default instead of null
     const ins=(t,r)=>sb.from(t).insert(r,{defaultToNull:false});
