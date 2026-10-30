@@ -205,3 +205,16 @@ html{scrollbar-gutter:stable}
 body{margin:0;font-size:15px}
 img{max-width:100%}
 :root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+/* audit list: answer items in any order */
+.row.asec{min-height:0;padding:7px 12px;background:var(--surface-2);font-weight:700;font-size:13px;color:var(--muted)}
+.ayn{display:flex;gap:6px;flex:none}
+.ayn .btn{padding:8px 14px;border-width:2px;justify-content:center;min-width:64px}
+.arow.a-yes{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.arow.a-no{background:var(--need-bg)}
+.arow.cur{box-shadow:inset 3px 0 0 var(--accent)}
+.abar{position:sticky;bottom:calc(8px + env(safe-area-inset-bottom,0px));z-index:5;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px 12px;margin-bottom:12px;box-shadow:var(--shadow)}
+@media (max-width:520px){.ayn .btn{min-width:0;padding:8px 11px}.arow{gap:9px}}
+/* how many to buy */
+.qst .btn{padding:4px 10px}
+.qst .qn{min-width:22px;text-align:center;font-weight:700;font-variant-numeric:tabular-nums}
+.tile .qst{margin-top:6px}

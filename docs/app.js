@@ -12,8 +12,10 @@ const TBL={groups:"k_groups",stores:"k_stores",items:"k_items"};
 const FIELDS={
   groups:["name","emoji","order"],
   stores:["name","emoji","url","searchUrl","order"],
-  items:["name","note","groupId","storeId","emoji","image","price","need","inCart","oneOff","history","norm","checkEvery","stock","checkedAt"],
+  items:["name","note","groupId","storeId","emoji","image","price","need","inCart","oneOff","history","norm","checkEvery","stock","checkedAt","qty"],
 };
+// qty = how many units to buy; the column comes from 002_qty.sql — until it is run, the app just doesn't send it
+let noQty=false;
 const MAP={groupId:"group_id",storeId:"store_id",inCart:"in_cart",oneOff:"one_off",checkEvery:"check_every",checkedAt:"checked_at",searchUrl:"search_url",order:"ord"};
 const UNMAP=Object.fromEntries(Object.entries(MAP).map(([a,b])=>[b,a]));
 function fromRow(r){
@@ -28,7 +30,7 @@ function fromRow(r){
 function toRow(col,o){
   const r={};
   for(const k of FIELDS[col]){
-    if(!(k in o))continue;const v=o[k];
+    if(!(k in o)||(k==="qty"&&noQty))continue;const v=o[k];
     if(k==="checkedAt")r.checked_at=v?new Date(v).toISOString():null;
     else if(k==="groupId"||k==="storeId")r[MAP[k]]=v||null;
     else r[MAP[k]||k]=v;
@@ -76,6 +78,7 @@ async function load(){
   const rs=await Promise.all(COLS.map(c=>sb.from(TBL[c]).select("*")));
   const bad=rs.find(r=>r.error);
   if(bad){console.error(bad.error);main.innerHTML=`<div class="empty"><b>База ещё не готова</b>Нужно один раз запустить файл 001_korzinka.sql в Supabase → SQL Editor.</div>`;return}
+  const ir=rs[COLS.indexOf("items")].data;noQty=!!ir.length&&!("qty" in ir[0]);
   COLS.forEach((c,i)=>{const o={};rs[i].data.forEach(r=>o[r.id]=fromRow(r));S[c]=o;loaded[c]=true});
   render();
 }
@@ -199,6 +202,8 @@ $("#import-file").addEventListener("change",async e=>{
       if(col!=="items"&&have[col][key(v.name)]){ids[old]=have[col][key(v.name)];return []}
       if(col==="items"&&haveItems.has(key(v.name)))return [];
       const id=ids[old]=newId();
+      // old files kept qty as text like «1 кг» — only a plain number means «how many to buy»
+      if(col==="items"){const {qty,...rest}=v;v=/^\d+$/.test(String(qty??"").trim())?{...rest,qty:+qty}:rest}
       if(col==="items")v={...v,groupId:ids[v.groupId]||"",storeId:ids[v.storeId]||"",image:imgSrc(v.image),history:v.history||[]};
       return [{id,...toRow(col,v)}];
     });
@@ -262,12 +267,24 @@ function buckets(its){
   }
   return groupsSorted().map(g=>({...g,key:"g:"+g.id,kind:"cat",items:its.filter(i=>(S.groups[i.groupId]?i.groupId:"")===g.id)}));
 }
+// how many units to buy (no fixed unit: packs, kg, bottles — whatever fits the item)
+const qtyOf=it=>Math.max(1,Math.round(+it.qty||1));
+function qtyHtml(it){
+  const q=qtyOf(it),id=esc(it.id);
+  return `<div class="stepper qst"><button class="btn" data-act="qty" data-id="${id}" data-d="-1" aria-label="${q>1?"Меньше":"Убрать из списка"}">−</button><span class="qn" aria-label="Сколько купить">${q}</span><button class="btn" data-act="qty" data-id="${id}" data-d="1" aria-label="Больше">+</button></div>`;
+}
+function setQty(id,d){
+  const it=S.items[id];if(!it)return;
+  const q=(it.need?qtyOf(it):0)+d;
+  if(q<1)patch("items",id,{need:false,inCart:false,qty:null});
+  else patch("items",id,{need:true,qty:q});
+}
 function buyText(){
   const lines=[];
   buckets(allItems().filter(it=>it.need&&!it.inCart&&inFilter(it))).forEach(b=>{
     if(!b.items.length)return;
     if(b.kind!=="none"){if(lines.length)lines.push("");lines.push((b.emoji?b.emoji+" ":"")+b.name+":")}
-    b.items.forEach(it=>lines.push("• "+it.name+(it.note?" ("+it.note+")":"")));
+    b.items.forEach(it=>lines.push("• "+it.name+(qtyOf(it)>1?" × "+qtyOf(it):"")+(it.note?" ("+it.note+")":"")));
   });
   const st=S.stores[storeFilter];
   const head=st?`Купить в ${st.name}:`:storeFilter==="none"?"Купить (где угодно):":"Купить:";
@@ -308,73 +325,79 @@ function render(){
 }
 
 /* ---------- audit: go through items one by one, «есть» / «нет» ---------- */
-let audit=null; // {title, ids:[], i, ans:{id:true|false}}
+let audit=null; // {title, ids:[], ans:{id:true|false}}
 function auditStartModal(){
   const all=allItems().filter(i=>!i.oneOff);
-  const chip=(scope,label,n)=>n?`<button class="chip" data-scope="${esc(scope)}">${label} <span class="cnt">${n}</span></button>`:"";
+  const pick=new Set();
+  const chip=(scope,label,n)=>n?`<button class="chip" data-pick="${esc(scope)}" aria-pressed="false">${label} <span class="cnt">${n}</span></button>`:"";
   const gs=groupsSorted().filter(g=>g.id).map(g=>chip("g:"+g.id,`${esc(g.emoji||"")} ${esc(g.name)}`,all.filter(i=>i.groupId===g.id).length)).join("");
   const ss=storesSorted().map(s=>chip("s:"+s.id,`${esc(s.emoji||"")} ${esc(s.name)}`,all.filter(i=>i.storeId===s.id).length)).join("");
+  const chosen=()=>all.filter(i=>pick.has("g:"+i.groupId)||pick.has("s:"+i.storeId));
+  const start=(its,title)=>{
+    // walk in the same order as the catalog: by category, then name
+    const ord={};groupsSorted().forEach((g,k)=>ord[g.id]=k);
+    its=[...its].sort((a,c)=>(ord[a.groupId]??99)-(ord[c.groupId]??99)||String(a.name).localeCompare(c.name,"ru"));
+    audit={title,ids:its.map(i=>i.id),ans:{}};closeModal();render();window.scrollTo(0,0);
+  };
   openModal(`<h2>Что проверяем?</h2>
-    <p class="qty" style="margin:0">Я буду показывать товары по одному, а вы отвечаете «Есть» или «Нет». Всё, чего нет, попадёт в список покупок.</p>
-    <div class="fld"><button class="btn pri" data-scope="all" style="justify-content:center">Все товары · ${all.length}</button></div>
-    <div class="fld"><label>Или одну категорию</label><div class="chips" style="flex-wrap:wrap">${gs}</div></div>
-    ${ss?`<div class="fld"><label>Или один магазин</label><div class="chips" style="flex-wrap:wrap">${ss}</div></div>`:""}
-    <div class="mact"><button class="btn" data-close>Отмена</button></div>`,m=>{
-    m.addEventListener("click",e=>{const b=e.target.closest("[data-scope]");if(!b)return;
-      const sc=b.dataset.scope;let its=all,title="Все товары";
-      if(sc.startsWith("g:")){const id=sc.slice(2);its=all.filter(i=>i.groupId===id);title=S.groups[id].name}
-      if(sc.startsWith("s:")){const id=sc.slice(2);its=all.filter(i=>i.storeId===id);title=S.stores[id].name}
-      // walk in the same order as the catalog: by category, then name
-      const ord={};groupsSorted().forEach((g,k)=>ord[g.id]=k);
-      its=[...its].sort((a,c)=>(ord[a.groupId]??99)-(ord[c.groupId]??99)||String(a.name).localeCompare(c.name,"ru"));
-      audit={title,ids:its.map(i=>i.id),i:0,ans:{}};closeModal();render();window.scrollTo(0,0);
+    <p class="qty" style="margin:0">Покажу список товаров — отмечайте «Есть» или «Нет» в любом порядке. Всё, чего нет, попадёт в список покупок.</p>
+    <div class="fld"><button class="btn" data-all style="justify-content:center">Все товары · ${all.length}</button></div>
+    <div class="fld"><label>Или выберите категории (можно несколько)</label><div class="chips" style="flex-wrap:wrap">${gs}</div></div>
+    ${ss?`<div class="fld"><label>И/или магазины</label><div class="chips" style="flex-wrap:wrap">${ss}</div></div>`:""}
+    <div class="mact"><button class="btn" data-close>Отмена</button><button class="btn pri" id="aGo" disabled>Выберите категории</button></div>`,m=>{
+    const go=m.querySelector("#aGo");
+    m.addEventListener("click",e=>{
+      if(e.target.closest("[data-all]")){start(all,"Все товары");return}
+      if(e.target.closest("#aGo")){const names=[...pick].map(k=>(k[0]==="g"?S.groups:S.stores)[k.slice(2)].name);start(chosen(),names.join(", "));return}
+      const b=e.target.closest("[data-pick]");if(!b)return;
+      const k=b.dataset.pick;pick.has(k)?pick.delete(k):pick.add(k);b.setAttribute("aria-pressed",pick.has(k));
+      const n=chosen().length;go.disabled=!n;go.textContent=n?`Начать · ${n}`:"Выберите категории";
     });
   });
 }
 function renderAudit(){
   const ids=audit.ids.filter(id=>S.items[id]);audit.ids=ids;
-  const done=Object.keys(audit.ans).filter(id=>S.items[id]).length,total=ids.length;
-  const bar=`<div class="aprog"><div style="width:${total?Math.round(done/total*100):0}%"></div></div>`;
-  let h=`<div class="ahead"><span><b>Проверка: ${esc(audit.title)}</b> · отмечено ${done} из ${total}</span><button class="btn ghost" data-act="auditStop">Прервать</button></div>${bar}`;
-  if(audit.i>=total){
-    const missing=ids.filter(id=>audit.ans[id]===false).map(id=>S.items[id]);
-    const skipped=ids.filter(id=>audit.ans[id]===undefined).length;
-    h+=`<div class="acard"><h2>${missing.length?`Не хватает: ${missing.length}`:"Всё есть 🎉"}</h2>
-      ${missing.length?`<p class="amiss">${missing.map(i=>esc(i.name)).join(", ")}</p>`:""}
-      ${skipped?`<p class="qty">Без ответа осталось ${skipped} — вернитесь и отметьте их.</p>`:""}
-      <div class="abtns"><button class="btn" data-act="auditBack">← Назад</button><button class="btn pri" data-act="auditSave"${skipped?" disabled":""}>Сохранить и открыть список</button></div></div>`;
-    return h;
-  }
-  const it={id:ids[audit.i],...S.items[ids[audit.i]]},g=S.groups[it.groupId],a=audit.ans[it.id];
-  h+=`<div class="acard">
-    <div class="abig">${it.image?`<img src="${esc(imgSrc(it.image))}" alt="">`:esc(it.emoji||"🛒")}</div>
-    <div class="qty">${g?esc((g.emoji||"")+" "+g.name):""} · ${audit.i+1} из ${total}</div>
-    <h2>${esc(it.name)}</h2>${it.note?`<div class="note-t">${esc(it.note)}</div>`:""}
-    <div class="abtns big"><button class="btn yes${a===true?" on":""}" data-act="auditAns" data-v="1">Есть</button><button class="btn no${a===false?" on":""}" data-act="auditAns" data-v="0">Нет, купить</button></div>
-    <div class="abtns"><button class="btn ghost" data-act="auditBack"${audit.i?"":" disabled"}>← Назад</button><span class="qty">Клавиши: 1 — есть, 2 — нет</span></div>
-  </div>`;
+  const done=ids.filter(id=>audit.ans[id]!==undefined).length,total=ids.length,left=total-done;
+  const miss=ids.filter(id=>audit.ans[id]===false).length;
+  const cur=ids.find(id=>audit.ans[id]===undefined);
+  let h=`<div class="ahead"><span><b>Проверка: ${esc(audit.title)}</b> · отмечено ${done} из ${total}</span><button class="btn ghost" data-act="auditStop">Прервать</button></div>
+    <div class="aprog"><div style="width:${total?Math.round(done/total*100):0}%"></div></div>
+    <p class="qty" style="margin:0">Отмечайте в любом порядке. На компьютере клавиши 1 — есть, 2 — нет отмечают товар в рамке.</p>`;
+  let last=null;
+  h+=`<div class="list">`;
+  ids.forEach(id=>{const it=S.items[id],a=audit.ans[id];
+    const gid=S.groups[it.groupId]?it.groupId:"";
+    if(gid!==last){last=gid;const g=S.groups[gid];h+=`<div class="row asec">${g?esc((g.emoji||"")+" "+g.name):"Без группы"}</div>`}
+    h+=`<div class="row arow${a===true?" a-yes":a===false?" a-no":""}${id===cur?" cur":""}" data-aid="${esc(id)}">${picHtml(it)}<div class="txt"><span class="nm">${esc(it.name)}</span>${it.note?`<span class="note-t">${esc(it.note)}</span>`:""}</div>
+      <div class="ayn"><button class="btn yes${a===true?" on":""}" data-act="auditAns" data-id="${esc(id)}" data-v="1" aria-pressed="${a===true}">Есть</button><button class="btn no${a===false?" on":""}" data-act="auditAns" data-id="${esc(id)}" data-v="0" aria-pressed="${a===false}">Нет</button></div></div>`;
+  });
+  h+=`</div>`;
+  h+=`<div class="abar">${left?`<button class="btn" data-act="auditNext">Без ответа: ${left} ↓</button>`:`<span>${miss?`Не хватает: <b>${miss}</b>`:"Всё есть 🎉"}</span>`}<button class="btn pri" data-act="auditSave"${left?" disabled":""}>Сохранить${miss?" и открыть список":""}</button></div>`;
   return h;
 }
-function auditAnswer(v){
-  if(!audit||audit.i>=audit.ids.length)return;
-  audit.ans[audit.ids[audit.i]]=v;
-  // jump to the next unanswered item
-  let n=audit.i+1;while(n<audit.ids.length&&audit.ans[audit.ids[n]]!==undefined)n++;
-  audit.i=n;render();
+function auditScrollToCur(){
+  const r=document.querySelector(".arow.cur");if(r)r.scrollIntoView({block:"center",behavior:"smooth"});
+}
+function auditAnswer(id,v){
+  if(!audit||!id)return;
+  // pressing the same answer again clears it
+  if(audit.ans[id]===v)delete audit.ans[id];else audit.ans[id]=v;
+  render();
 }
 async function auditSave(){
   const ans=audit.ans;audit=null;tab="buy";ls.set("tab",tab);render();
   let n=0;
   for(const [id,has] of Object.entries(ans)){const it=S.items[id];if(!it)continue;
-    if(!has&&!it.need){n++;await patch("items",id,{need:true,inCart:false})}
-    else if(has&&it.need)await patch("items",id,{need:false,inCart:false});
+    if(!has&&!it.need){n++;await patch("items",id,{need:true,inCart:false,qty:null})}
+    else if(has&&it.need)await patch("items",id,{need:false,inCart:false,qty:null});
   }
   toast(n?`Добавлено в список: ${n}`:"Список обновлён");
 }
 document.addEventListener("keydown",e=>{
   if(!audit||$("#modalRoot").firstChild||/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;
-  if(e.key==="1")auditAnswer(true);else if(e.key==="2")auditAnswer(false);
-  else if(e.key==="Backspace"&&audit.i>0){audit.i--;render()}
+  if(e.key!=="1"&&e.key!=="2")return;
+  const cur=document.querySelector(".arow.cur");if(!cur)return;
+  auditAnswer(cur.dataset.aid,e.key==="1");auditScrollToCur();
 });
 
 /* ---------- stock ("Заначка"): norm vs. counted amount ---------- */
@@ -384,8 +407,8 @@ const overdue=()=>tracked().filter(isOverdue);
 function setStock(id,v){
   const it=S.items[id];if(!it)return;v=Math.max(0,Math.round(v));
   const low=v<+it.norm;
-  patch("items",id,{stock:v,checkedAt:Date.now(),need:low,inCart:false});
-  toast(low?`Меньше нормы — добавила в список`:`Записала: ${v}`);
+  patch("items",id,{stock:v,checkedAt:Date.now(),need:low,inCart:false,qty:low?+it.norm-v:null});
+  toast(low?`Меньше нормы — добавила в список: ${+it.norm-v}`:`Записала: ${v}`);
 }
 function renderStock(){
   const its=tracked(),od=overdue();
@@ -457,7 +480,7 @@ function renderBuy(){
   const gs=groupsSorted();
   if(Object.keys(S.stores).length)h+=storeChips();
   const pending=Object.values(S.items).filter(i=>i.need&&!i.inCart&&inFilter(i));
-  const sum=pending.reduce((s,i)=>s+(+i.price||0),0),noPrice=pending.filter(i=>!i.price).length;
+  const sum=pending.reduce((s,i)=>s+(+i.price||0)*qtyOf(i),0),noPrice=pending.filter(i=>!i.price).length;
   const st=S.stores[storeFilter],site=st&&safeUrl(st.url);
   if(pending.length||site)h+=`<div class="storebar"><span class="sum">${pending.length?`Примерно <b>${fmt(sum)}</b>${noPrice?` · без цены: ${noPrice}`:""}`:""}</span>${site?`<a class="btn" href="${esc(site)}" target="_blank" rel="noopener">Открыть сайт ${esc(st.name)} ↗</a>`:""}</div>`;
   h+=`<form class="toolbar" id="quick" autocomplete="off">
@@ -515,9 +538,9 @@ function groupHtml(b,its,ctx){
     its.forEach(it=>{
       const meta=metaHtml(it);
       if(ctx==="buy"){
-        h+=`<div class="row${it.inCart?" done":""}"><button class="check" data-act="cart" data-id="${esc(it.id)}" aria-label="Купила">✓</button>${picHtml(it)}<div class="txt"><button class="txt" data-act="cart" data-id="${esc(it.id)}"><span class="nm">${esc(it.name)}</span></button>${meta}</div><button class="edit" data-act="editItem" data-id="${esc(it.id)}" aria-label="Изменить">${editSvg}</button></div>`;
+        h+=`<div class="row${it.inCart?" done":""}"><button class="check" data-act="cart" data-id="${esc(it.id)}" aria-label="Купила">✓</button>${picHtml(it)}<div class="txt"><button class="txt" data-act="cart" data-id="${esc(it.id)}"><span class="nm">${esc(it.name)}</span></button>${meta}</div>${qtyHtml(it)}<button class="edit" data-act="editItem" data-id="${esc(it.id)}" aria-label="Изменить">${editSvg}</button></div>`;
       }else{
-        h+=`<div class="row${it.need?" need":""}">${picHtml(it)}<div class="txt"><button class="txt" data-act="need" data-id="${esc(it.id)}"><span class="nm">${esc(it.name)}</span></button>${meta}</div>${it.need?'<span class="badge">Закончилось</span>':""}<button class="tog" data-act="need" data-id="${esc(it.id)}" aria-pressed="${!!it.need}" aria-label="Закончилось"></button><button class="edit" data-act="editItem" data-id="${esc(it.id)}" aria-label="Изменить">${editSvg}</button></div>`;
+        h+=`<div class="row${it.need?" need":""}">${picHtml(it)}<div class="txt"><button class="txt" data-act="need" data-id="${esc(it.id)}"><span class="nm">${esc(it.name)}</span></button>${meta}</div>${it.need?qtyHtml(it):""}<button class="tog" data-act="need" data-id="${esc(it.id)}" aria-pressed="${!!it.need}" aria-label="Закончилось"></button><button class="edit" data-act="editItem" data-id="${esc(it.id)}" aria-label="Изменить">${editSvg}</button></div>`;
       }
     });
     if(!its.length)h+=`<div class="row"><span class="qty">В группе пока нет товаров</span></div>`;
@@ -526,7 +549,7 @@ function groupHtml(b,its,ctx){
     h+=`<div class="tiles">`;
     its.forEach(it=>{
       const cls=ctx==="buy"?(it.inCart?" done":""):(it.need?" need":"");
-      h+=`<div class="tile${cls}"><button class="hit" data-act="${ctx==="buy"?"cart":"need"}" data-id="${esc(it.id)}">${picHtml(it)}<span class="cap"><span class="nm">${esc(it.name)}</span></span></button><div class="cap" style="padding-top:0">${metaHtml(it)}</div>${ctx==="cat"&&it.need?'<span class="badge">Нужно</span>':""}<button class="edit" data-act="editItem" data-id="${esc(it.id)}" aria-label="Изменить">${editSvg}</button></div>`;
+      h+=`<div class="tile${cls}"><button class="hit" data-act="${ctx==="buy"?"cart":"need"}" data-id="${esc(it.id)}">${picHtml(it)}<span class="cap"><span class="nm">${esc(it.name)}</span></span></button><div class="cap" style="padding-top:0">${metaHtml(it)}${it.need?qtyHtml(it):""}</div>${ctx==="cat"&&it.need?'<span class="badge">Нужно</span>':""}<button class="edit" data-act="editItem" data-id="${esc(it.id)}" aria-label="Изменить">${editSvg}</button></div>`;
     });
     if(!its.length)h+=`<span class="qty">В группе пока нет товаров</span>`;
     h+=`</div>`;
@@ -540,7 +563,7 @@ document.addEventListener("click",e=>{
   if(t.dataset.tab){tab=t.dataset.tab;ls.set("tab",tab);render();window.scrollTo(0,0);return}
   if(t.dataset.view){view=t.dataset.view;ls.set("view",view);render();return}
   const a=t.dataset.act,id=t.dataset.id;
-  if(a==="need"){const it=S.items[id];patch("items",id,{need:!it.need,inCart:false})}
+  if(a==="need"){const it=S.items[id];patch("items",id,{need:!it.need,inCart:false,qty:null})}
   else if(a==="cart"){const it=S.items[id];patch("items",id,{inCart:!it.inCart})}
   else if(a==="fold"){const k=t.dataset.key;collapsed.has(k)?collapsed.delete(k):collapsed.add(k);ls.set("collapsed",[...collapsed]);render()}
   else if(a==="finish")finishShopping();
@@ -549,10 +572,11 @@ document.addEventListener("click",e=>{
   else if(a==="stores")storesModal();
   else if(a==="settings")settingsModal();
   else if(a==="auditStart")auditStartModal();
-  else if(a==="auditAns")auditAnswer(t.dataset.v==="1");
-  else if(a==="auditBack"){if(audit&&audit.i>0){audit.i--;render()}}
+  else if(a==="auditAns")auditAnswer(id,t.dataset.v==="1");
+  else if(a==="auditNext")auditScrollToCur();
   else if(a==="auditStop"){audit=null;render()}
   else if(a==="auditSave")auditSave();
+  else if(a==="qty")setQty(id,+t.dataset.d);
   else if(a==="stockStep"){const it=S.items[id];setStock(id,(+it.stock||0)+(+t.dataset.d))}
   else if(a==="gotoStock"){tab="stock";ls.set("tab",tab);render();window.scrollTo(0,0)}
   else if(a==="addGroup")groupModal(null);
@@ -577,7 +601,7 @@ main.addEventListener("submit",e=>{
   const gid=$("#quickGroup").value;quickGroup=gid;ls.set("quickGroup",gid);
   const g=S.groups[gid];
   const sid=S.stores[storeFilter]?storeFilter:"";
-  put("items",newId(),{name,groupId:gid,emoji:(g&&g.emoji)||"🛒",need:true,inCart:false,oneOff:true,qty:"",storeId:sid});
+  put("items",newId(),{name,groupId:gid,emoji:(g&&g.emoji)||"🛒",need:true,inCart:false,oneOff:true,storeId:sid});
   toast("Добавлено в список");
 });
 
@@ -587,7 +611,7 @@ async function finishShopping(){
   for(const [id,it] of done){
     if(it.oneOff){await del("items",id);continue}
     const history=[...(it.history||[]),now].slice(-200);
-    await patch("items",id,{need:false,inCart:false,history});
+    await patch("items",id,{need:false,inCart:false,history,qty:null});
   }
   toast(`Куплено: ${done.length}`);
 }
@@ -662,7 +686,7 @@ function groupModal(gid){
 }
 
 function itemModal(id,gidDefault,normDefault){
-  const it=id?S.items[id]:{name:"",qty:"",groupId:gidDefault||"",emoji:(S.groups[gidDefault]||{}).emoji||"🛒",image:"",need:false,norm:normDefault||0};
+  const it=id?S.items[id]:{name:"",groupId:gidDefault||"",emoji:(S.groups[gidDefault]||{}).emoji||"🛒",image:"",need:false,norm:normDefault||0};
   let image=it.image||"";const startImage=image;let uploaded=[];
   const gs=groupsSorted().filter(g=>g.id);
   openPanel(`<h2>${id?"Товар":"Новый товар"}</h2>
