@@ -47,9 +47,8 @@ const assets={upload:async blob=>({id:await new Promise((res,rej)=>{const fr=new
 const imgSrc=v=>String(v||"").startsWith("data:")?v:"";
 let storeFilter=ls.get("storeFilter","all");
 let groupBy=ls.get("groupBy","cat");
-const fmt=n=>Math.round(n).toLocaleString("ru-RU")+" ₴";
 const DAY=864e5;
-let tab=ls.get("tab","buy"), view=ls.get("view","list"), query="";
+let tab=["buy","cat","stock"].includes(ls.get("tab","buy"))?ls.get("tab","buy"):"buy", view=ls.get("view","list"), query="";
 let collapsed=new Set(ls.get("collapsed",[]));
 let quickGroup=ls.get("quickGroup","");
 
@@ -302,9 +301,8 @@ const editSvg=`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" strok
 function render(){
   $("#tabBuy").setAttribute("aria-pressed",tab==="buy");
   $("#tabCat").setAttribute("aria-pressed",tab==="cat");
-  $("#tabStats").setAttribute("aria-pressed",tab==="stats");
   $("#tabStock").setAttribute("aria-pressed",tab==="stock");
-  document.querySelector(".viewsw").style.visibility=(tab==="stats"||tab==="stock"||audit)?"hidden":"";
+  document.querySelector(".viewsw").style.visibility=(tab==="stock"||audit)?"hidden":"";
   const od=overdue().length;$("#cntStock").hidden=!od;$("#cntStock").textContent=od;
   $("#vList").setAttribute("aria-pressed",view==="list");
   $("#vTiles").setAttribute("aria-pressed",view==="tiles");
@@ -321,7 +319,7 @@ function render(){
   $("#shareLbl").textContent=left?`Осталось купить: ${left}`:"Список пуст";
   // don't wipe a stock count the user is typing when a live update arrives
   if(document.activeElement&&document.activeElement.classList.contains("stock-in"))return;
-  main.innerHTML=(audit?renderAudit():tab==="buy"?renderBuy():tab==="cat"?renderCat():tab==="stock"?renderStock():renderStats());
+  main.innerHTML=(audit?renderAudit():tab==="buy"?renderBuy():tab==="cat"?renderCat():renderStock());
 }
 
 /* ---------- audit: go through items one by one, «есть» / «нет» ---------- */
@@ -445,28 +443,6 @@ function storeChips(){
   return h+`</div>`;
 }
 
-function renderStats(){
-  const items=Object.entries(S.items).map(([id,v])=>({id,...v})).filter(i=>(i.history||[]).length);
-  const now=Date.now(),monthStart=new Date(new Date().getFullYear(),new Date().getMonth(),1).getTime();
-  let monthN=0,monthSum=0,allN=0;
-  const rows=items.map(i=>{
-    const h=[...i.history].sort((a,b)=>a-b);allN+=h.length;
-    const inMonth=h.filter(t=>t>=monthStart).length;monthN+=inMonth;monthSum+=inMonth*(+i.price||0);
-    const every=h.length>1?(h[h.length-1]-h[0])/DAY/(h.length-1):null;
-    return {...i,n:h.length,last:h[h.length-1],every,spent:h.length*(+i.price||0)};
-  }).sort((a,b)=>b.n-a.n||b.last-a.last);
-  let h=`<div class="kpis">
-    <div class="kpi"><span>Покупок в этом месяце</span><b>${monthN}</b></div>
-    <div class="kpi"><span>Потрачено в этом месяце, примерно</span><b>${fmt(monthSum)}</b></div>
-    <div class="kpi"><span>Всего отмечено покупок</span><b>${allN}</b></div></div>`;
-  if(!rows.length)return h+`<div class="empty"><b>Статистики пока нет</b>Она начнёт собираться, когда вы отметите товары как купленные во вкладке «Купить» и нажмёте «Убрать купленное».</div>`;
-  const max=rows[0].n;
-  const ago=t=>{const d=Math.floor((now-t)/DAY);return d<=0?"сегодня":d===1?"вчера":d+" дн. назад"};
-  h+=`<div class="tbl"><table><thead><tr><th>Товар</th><th class="n">Раз</th><th></th><th>Последний раз</th><th class="n">Как часто</th><th class="n">Потрачено ≈</th></tr></thead><tbody>`;
-  rows.forEach(r=>{h+=`<tr><td>${esc(r.emoji||"")} ${esc(r.name)}</td><td class="n">${r.n}</td><td style="width:90px"><div class="bar" style="width:${Math.round(r.n/max*100)}%"></div></td><td>${ago(r.last)}</td><td class="n">${r.every==null?"—":r.every<1.5?"каждый день":"раз в "+Math.round(r.every)+" дн."}</td><td class="n">${r.price?fmt(r.spent):"—"}</td></tr>`});
-  return h+`</tbody></table></div>`;
-}
-
 function viewbar(){
   const o=[["cat","Категории"],["store","Магазины"],["none","Без групп"]];
   return `<div class="viewbar">Группировать:<div class="seg" role="group" aria-label="Группировка">${o.map(([v,t])=>`<button data-act="gb" data-v="${v}" aria-pressed="${groupBy===v}">${t}</button>`).join("")}</div></div>`;
@@ -479,10 +455,8 @@ function renderBuy(){
   h+=`<button class="btn acta" data-act="auditStart">✓ Пройтись по дому: что есть, чего нет</button>`;
   const gs=groupsSorted();
   if(Object.keys(S.stores).length)h+=storeChips();
-  const pending=Object.values(S.items).filter(i=>i.need&&!i.inCart&&inFilter(i));
-  const sum=pending.reduce((s,i)=>s+(+i.price||0)*qtyOf(i),0),noPrice=pending.filter(i=>!i.price).length;
   const st=S.stores[storeFilter],site=st&&safeUrl(st.url);
-  if(pending.length||site)h+=`<div class="storebar"><span class="sum">${pending.length?`Примерно <b>${fmt(sum)}</b>${noPrice?` · без цены: ${noPrice}`:""}`:""}</span>${site?`<a class="btn" href="${esc(site)}" target="_blank" rel="noopener">Открыть сайт ${esc(st.name)} ↗</a>`:""}</div>`;
+  if(site)h+=`<div class="storebar"><span class="sum"></span>${site?`<a class="btn" href="${esc(site)}" target="_blank" rel="noopener">Открыть сайт ${esc(st.name)} ↗</a>`:""}</div>`;
   h+=`<form class="toolbar" id="quick" autocomplete="off">
     <input id="quickName" placeholder="Добавить разово, например «свечи для торта»" aria-label="Название товара">
     <select id="quickGroup" aria-label="Группа">${gs.filter(g=>g.id).map(g=>`<option value="${esc(g.id)}"${g.id===quickGroup?" selected":""}>${esc(g.emoji||"")} ${esc(g.name)}</option>`).join("")||'<option value="">Без группы</option>'}</select>
@@ -518,7 +492,6 @@ function renderCat(){
 function metaHtml(it){
   const st=S.stores[it.storeId],u=safeUrl(searchUrl(st,it.name));
   const parts=[];
-  if(it.price)parts.push(`<span class="price">≈ ${fmt(+it.price)}</span>`);
   if(st)parts.push(u?`<a class="slink" href="${esc(u)}" target="_blank" rel="noopener" title="Найти на сайте">${esc(st.emoji||"")} ${esc(st.name)} ↗</a>`:`<span>${esc(st.emoji||"")} ${esc(st.name)}</span>`);
   return (it.note?`<span class="note-t">${esc(it.note)}</span>`:"")+(parts.length?`<span class="meta">${parts.join("")}</span>`:"");
 }
@@ -693,8 +666,7 @@ function itemModal(id,gidDefault,normDefault){
     <form id="itf" class="fld" style="gap:12px">
       <div class="fld"><label for="iName">Название</label><input id="iName" required value="${esc(it.name)}" placeholder="Например, корм для кошки"></div>
       <div class="fld"><label for="iNote">Заметка (попадёт в список в скобках)</label><input id="iNote" value="${esc(it.note||"")}" placeholder="например, Сонечко или Хмаринка"></div>
-      <div class="grid2"><div class="fld"><label for="iPrice">Цена примерно, ₴</label><input id="iPrice" type="number" inputmode="decimal" min="0" step="any" value="${esc(it.price||"")}" placeholder="например, 45"></div>
-      <div class="fld"><label for="iGroup">Группа</label><select id="iGroup">${gs.map(g=>`<option value="${esc(g.id)}"${g.id===it.groupId?" selected":""}>${esc(g.emoji||"")} ${esc(g.name)}</option>`).join("")}</select></div></div>
+      <div class="fld"><label for="iGroup">Группа</label><select id="iGroup">${gs.map(g=>`<option value="${esc(g.id)}"${g.id===it.groupId?" selected":""}>${esc(g.emoji||"")} ${esc(g.name)}</option>`).join("")}</select></div>
       <div class="grid2"><div class="fld"><label for="iNorm">Заначка: норма, шт</label><input id="iNorm" type="number" min="0" inputmode="numeric" value="${esc(it.norm||"")}" placeholder="не отслеживать"></div>
       <div class="fld"><label for="iEvery">Напоминать раз в, дней</label><input id="iEvery" type="number" min="1" inputmode="numeric" value="${esc(it.checkEvery||14)}"></div></div>
       <div class="fld"><label for="iStore">Где покупать</label><select id="iStore"><option value="">Где угодно</option>${storesSorted().map(s=>`<option value="${esc(s.id)}"${s.id===it.storeId?" selected":""}>${esc(s.emoji||"")} ${esc(s.name)}</option>`).join("")}</select></div>
@@ -723,8 +695,7 @@ function itemModal(id,gidDefault,normDefault){
     m.querySelector("#itf").addEventListener("submit",e=>{
       e.preventDefault();
       const name=m.querySelector("#iName").value.trim();if(!name)return;
-      const pr=parseFloat(String(m.querySelector("#iPrice").value).replace(",","."));
-      const data={name,note:m.querySelector("#iNote").value.trim(),groupId:m.querySelector("#iGroup").value,emoji:em.value.trim()||"🛒",image,price:isFinite(pr)&&pr>0?pr:0,storeId:m.querySelector("#iStore").value,
+      const data={name,note:m.querySelector("#iNote").value.trim(),groupId:m.querySelector("#iGroup").value,emoji:em.value.trim()||"🛒",image,storeId:m.querySelector("#iStore").value,
         norm:Math.max(0,Math.round(+m.querySelector("#iNorm").value||0)),checkEvery:Math.max(1,Math.round(+m.querySelector("#iEvery").value||14))};
       const keep=m.querySelector("#iKeep");if(keep&&keep.checked)data.oneOff=false;
       if(id)patch("items",id,data);else put("items",newId(),Object.assign({need:false,inCart:false,oneOff:false},data));
